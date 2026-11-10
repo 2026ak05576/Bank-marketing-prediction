@@ -41,8 +41,25 @@ if test_df is not None:
     target_col = test_df.columns[-1]
     st.write(f"Target column detected: {target_col}")
 
-    X_test = test_df.drop(columns=[target_col])
+        X_test = test_df.drop(columns=[target_col])
     y_test = test_df[target_col]
+
+    # ULTRA FIX for BITS data
+    y_test = pd.to_numeric(y_test, errors='coerce')
+    # If target is scaled (like -0.52, 1.41), convert to 0/1
+    if y_test.min() < 0 or y_test.max() > 1 or y_test.nunique() > 2:
+        # If scaled, threshold at median or 0
+        try:
+            y_test = (y_test > y_test.median()).astype(int)
+        except:
+            y_test = (y_test > 0).astype(int)
+    
+    # Remove NaN / Inf rows
+    valid_idx = y_test.replace([float('inf'), float('-inf')], float('nan')).dropna().index
+    y_test = y_test.loc[valid_idx]
+    X_test = X_test.loc[valid_idx]
+    X_test = X_test.replace([float('inf'), float('-inf')], float('nan')).dropna()
+    y_test = y_test.loc[X_test.index]
 
     # FIX 1: Convert y_test yes/no to 1/0
     if y_test.dtype == 'object':

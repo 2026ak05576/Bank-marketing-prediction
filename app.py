@@ -36,45 +36,56 @@ else:
 
 if test_df is not None:
     st.write("Preview:", test_df.head())
-    # Find target column
-    target_col = None
-    for col in ['target','y','Target','label']:
-        if col in test_df.columns:
-            target_col = col
-            break
+
+    # Auto-detect target column - last column is target
+    target_col = test_df.columns[-1]
+    st.write(f"Target column detected: {target_col}")
+
+    X_test = test_df.drop(columns=[target_col])
+    y_test = test_df[target_col]
+
+    # FIX 1: Convert y_test yes/no to 1/0
+    if y_test.dtype == 'object':
+        y_test = y_test.map(lambda x: 1 if str(x).lower() in ['yes','1','true','y'] else 0)
+
+    # FIX 2: Keep only numeric columns for X_test
+    X_test = X_test.select_dtypes(include=['number'])
     
-    if target_col:
-        X_test = test_df.drop(columns=[target_col])
-        y_test = test_df[target_col]
-        model = joblib.load(model_choice)
-        
-        # Handle scaling if needed
-        if os.path.exists("scaler.pkl"):
-            try:
-                scaler = joblib.load("scaler.pkl")
-                X_test = scaler.transform(X_test)
-            except:
-                pass
-        
-        y_pred = model.predict(X_test)
-        y_proba = model.predict_proba(X_test)[:,1] if hasattr(model,"predict_proba") else y_pred
+    model = joblib.load(model_choice)
 
-        # c. Display metrics [1 mark]
-        st.subheader("c. Display of Evaluation Metrics")
-        c1,c2,c3 = st.columns(3)
-        c1.metric("Accuracy", f"{accuracy_score(y_test,y_pred):.4f}")
+    # Handle scaling if needed
+    if os.path.exists("scaler.pkl"):
+        try:
+            scaler = joblib.load("scaler.pkl")
+            X_test = scaler.transform(X_test)
+        except:
+            pass
+
+    y_pred = model.predict(X_test)
+    try:
+        y_proba = model.predict_proba(X_test)[:,1]
+    except:
+        y_proba = y_pred
+
+    # c. Display metrics [1 mark]
+    st.subheader("c. Display of Evaluation Metrics")
+    c1,c2,c3 = st.columns(3)
+    c1.metric("Accuracy", f"{accuracy_score(y_test,y_pred):.4f}")
+    try:
         c2.metric("AUC", f"{roc_auc_score(y_test,y_proba):.4f}")
-        c3.metric("Precision", f"{precision_score(y_test,y_pred):.4f}")
-        c1.metric("Recall", f"{recall_score(y_test,y_pred):.4f}")
-        c2.metric("F1 Score", f"{f1_score(y_test,y_pred):.4f}")
-        c3.metric("MCC", f"{matthews_corrcoef(y_test,y_pred):.4f}")
+    except:
+        c2.metric("AUC", "N/A")
+    c3.metric("Precision", f"{precision_score(y_test,y_pred):.4f}")
+    c1.metric("Recall", f"{recall_score(y_test,y_pred):.4f}")
+    c2.metric("F1 Score", f"{f1_score(y_test,y_pred):.4f}")
+    c3.metric("MCC", f"{matthews_corrcoef(y_test,y_pred):.4f}")
 
-        # d. Confusion matrix [1 mark]
-        st.subheader("d. Confusion Matrix & Classification Report")
-        cm = confusion_matrix(y_test, y_pred)
-        fig, ax = plt.subplots()
-        sns.heatmap(cm, annot=True, fmt='d', ax=ax)
-        ax.set_xlabel("Predicted")
-        ax.set_ylabel("Actual")
-        st.pyplot(fig)
-        st.code(classification_report(y_test, y_pred))
+    # d. Confusion matrix [1 mark]
+    st.subheader("d. Confusion Matrix & Classification Report")
+    cm = confusion_matrix(y_test, y_pred)
+    fig, ax = plt.subplots()
+    sns.heatmap(cm, annot=True, fmt='d', ax=ax)
+    ax.set_xlabel("Predicted")
+    ax.set_ylabel("Actual")
+    st.pyplot(fig)
+    st.code(classification_report(y_test, y_pred))

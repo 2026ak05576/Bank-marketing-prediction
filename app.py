@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import joblib
 import os
+import numpy as np
 from sklearn.metrics import accuracy_score, roc_auc_score, precision_score, recall_score, f1_score, matthews_corrcoef, confusion_matrix, classification_report
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -9,74 +10,62 @@ import seaborn as sns
 st.set_page_config(page_title="Bank Marketing Prediction", layout="wide")
 st.title("Bank Marketing Prediction - BITS Assignment 2")
 
-# Show comparison table if exists
 if os.path.exists("model_comparison.csv"):
     st.subheader("d. Models Used - Comparison Table")
     df_comp = pd.read_csv("model_comparison.csv")
     st.dataframe(df_comp)
 
-# b. Model selection dropdown [1 mark]
 st.subheader("b. Model Selection Dropdown")
-pkl_files = [f for f in os.listdir('.') if f.endswith('.pkl') and 'scaler' not in f]
-model_choice = st.selectbox("Select Model", pkl_files)
+pkl_files = [f for f in os.listdir('.') if f.endswith('.pkl') and 'scaler' not in f.lower()]
+model_choice = st.selectbox("Select Model", pkl_files if pkl_files else ["No model found"])
 
-# a. Dataset upload [1 mark]
 st.subheader("a. Dataset Upload Option (Test Data CSV)")
 uploaded = st.file_uploader("Upload test_data.csv", type=["csv"])
 
-# Use uploaded file or default test_data.csv
 if uploaded is not None:
     test_df = pd.read_csv(uploaded)
+elif os.path.exists("test_data.csv"):
+    st.info("Using default test_data.csv from repo")
+    test_df = pd.read_csv("test_data.csv")
 else:
-    if os.path.exists("test_data.csv"):
-        st.info("Using default test_data.csv from repo. You can also upload your own.")
-        test_df = pd.read_csv("test_data.csv")
-    else:
-        test_df = None
+    test_df = None
 
 if test_df is not None:
     st.write("Preview:", test_df.head())
-
-    # Auto-detect target column - last column is target
     target_col = test_df.columns[-1]
     st.write(f"Target column detected: {target_col}")
 
-        X_test = test_df.drop(columns=[target_col])
+    X_test = test_df.drop(columns=[target_col])
     y_test = test_df[target_col]
 
-    # ULTRA FIX for BITS data
+    # Fix y_test
     y_test = pd.to_numeric(y_test, errors='coerce')
-    # If target is scaled (like -0.52, 1.41), convert to 0/1
+    y_test = y_test.replace([np.inf, -np.inf], np.nan)
+    # If target is scaled like -0.52, convert to 0/1 via median
     if y_test.min() < 0 or y_test.max() > 1 or y_test.nunique() > 2:
-        # If scaled, threshold at median or 0
-        try:
-            y_test = (y_test > y_test.median()).astype(int)
-        except:
-            y_test = (y_test > 0).astype(int)
+        y_test = (y_test > y_test.median()).astype(int)
     
-    # Remove NaN / Inf rows
-    valid_idx = y_test.replace([float('inf'), float('-inf')], float('nan')).dropna().index
-    y_test = y_test.loc[valid_idx]
-    X_test = X_test.loc[valid_idx]
-    X_test = X_test.replace([float('inf'), float('-inf')], float('nan')).dropna()
-    y_test = y_test.loc[X_test.index]
-
-    # FIX 1: Convert y_test yes/no to 1/0
-    if y_test.dtype == 'object':
-        y_test = y_test.map(lambda x: 1 if str(x).lower() in ['yes','1','true','y'] else 0)
-
-    # FIX 2: Keep only numeric columns for X_test
-    X_test = X_test.select_dtypes(include=['number'])
+    # Clean X_test and y_test together
+    X_test = X_test.apply(pd.to_numeric, errors='coerce')
+    X_test = X_test.replace([np.inf, -np.inf], np.nan)
     
+    # Drop rows with NaN
+    combined = pd.concat([X_test, y_test], axis=1).dropna()
+    y_test = combined[target_col]
+    X_test = combined.drop(columns=[target_col])
+
+    st.write(f"Cleaned data shape: {X_test.shape}")
+
     model = joblib.load(model_choice)
 
-    # Handle scaling if needed
+    # Only apply scaler if feature count matches
     if os.path.exists("scaler.pkl"):
         try:
             scaler = joblib.load("scaler.pkl")
-            X_test = scaler.transform(X_test)
-        except:
-            pass
+            if hasattr(scaler, 'n_features_in_') and scaler.n_features_in_ == X_test.shape[1]:
+                X_test = scaler.transform(X_test)
+        except Exception as e:
+            st.warning(f"Scaler skipped: {e}")
 
     y_pred = model.predict(X_test)
     try:
@@ -84,20 +73,18 @@ if test_df is not None:
     except:
         y_proba = y_pred
 
-    # c. Display metrics [1 mark]
     st.subheader("c. Display of Evaluation Metrics")
     c1,c2,c3 = st.columns(3)
-    c1.metric("Accuracy", f"{accuracy_score(y_test,y_pred):.4f}")
+    c1.metric("Accuracy", f"{accuracy_score(y_test, y_pred):.4f}")
     try:
-        c2.metric("AUC", f"{roc_auc_score(y_test,y_proba):.4f}")
+        c2.metric("AUC", f"{roc_auc_score(y_test, y_proba):.4f}")
     except:
         c2.metric("AUC", "N/A")
-    c3.metric("Precision", f"{precision_score(y_test,y_pred):.4f}")
-    c1.metric("Recall", f"{recall_score(y_test,y_pred):.4f}")
-    c2.metric("F1 Score", f"{f1_score(y_test,y_pred):.4f}")
-    c3.metric("MCC", f"{matthews_corrcoef(y_test,y_pred):.4f}")
+    c3.metric("Precision", f"{precision_score(y_test, y_pred, zero_division=0):.4f}")
+    c1.metric("Recall", f"{recall_score(y_test, y_pred, zero_division=0):.4f}")
+    c2.metric("F1 Score", f"{f1_score(y_test, y_pred, zero_division=0):.4f}")
+    c3.metric("MCC", f"{matthews_corrcoef(y_test, y_pred):.4f}")
 
-    # d. Confusion matrix [1 mark]
     st.subheader("d. Confusion Matrix & Classification Report")
     cm = confusion_matrix(y_test, y_pred)
     fig, ax = plt.subplots()
@@ -105,4 +92,4 @@ if test_df is not None:
     ax.set_xlabel("Predicted")
     ax.set_ylabel("Actual")
     st.pyplot(fig)
-    st.code(classification_report(y_test, y_pred))
+    st.text(classification_report(y_test, y_pred, zero_division=0))
